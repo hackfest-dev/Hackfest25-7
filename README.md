@@ -78,23 +78,8 @@ RiskIQ is an AI-driven RegTech application designed to help **NBFCs and fintech 
 
 ---
 
-## 🧑‍💻 Contributing
-
-We welcome developers, legal AI researchers, and fintech auditors to help us:
-- Add new RBI rule sets
-- Improve AI model accuracy
-- Expand sandbox coverage
-
----
-
-## 📚 License
-
-MIT License — Built for innovation, shared for impact.
-
----
-
 ## 🧾 Built with ❤️ by Team Laser Hamsters
 
-This project was built as part of a national-level hackathon to solve real-world regulatory challenges in India’s booming fintech landscape.
+This project was built as part of a national-level hackathon at Hackfest to solve real-world regulatory challenges in India’s booming fintech landscape.
 
 
