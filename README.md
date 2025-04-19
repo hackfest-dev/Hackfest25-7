@@ -33,7 +33,7 @@ RiskIQ is an AI-driven RegTech application designed to help **NBFCs and fintech 
 | Layer       | Technology                          |
 |------------|-------------------------------------|
 | **Frontend** | React.js + TypeScript + Tailwind CSS |
-| **Backend**  | FastAPI (Python)                   |
+| **Backend**  | Flask+fastapi (Python)                   |
 | **Auth**     | Firebase Authentication            |
 | **Database** | Firebase Firestore / PostgreSQL    |
 | **Storage**  | Firebase Storage                   |
