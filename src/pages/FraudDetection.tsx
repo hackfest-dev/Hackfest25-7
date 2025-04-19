@@ -24,88 +24,89 @@ const FraudDetection = () => {
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [fraudResult, setFraudResult] = useState<any>(null);
+  const [isFlagged, setIsFlagged] = useState(false);
+  const [flaggingInProgress, setFlaggingInProgress] = useState(false);
+  const [flaggedQueue, setFlaggedQueue] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     // Basic validation
     if (!formData.applicantName || !formData.email || !formData.phone) {
       toast.error('Please fill all required fields');
       return;
     }
-    
     setIsAnalyzing(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      // Mock fraud analysis logic
-      const isNightApplication = Math.random() > 0.7;
-      const isUnusualLocation = Math.random() > 0.6;
-      const hasMultipleApplications = Math.random() > 0.8;
-      const isSpeedyApplication = Math.random() > 0.7;
-      
-      const anomalyScore = Math.floor(
-        (isNightApplication ? 25 : 0) +
-        (isUnusualLocation ? 30 : 0) +
-        (hasMultipleApplications ? 35 : 0) +
-        (isSpeedyApplication ? 20 : 0)
-      );
-      
-      // Normalize score to 0-100
-      const normalizedScore = Math.min(100, anomalyScore);
-      
-      // Set fraud detection result
-      setFraudResult({
-        applicantName: formData.applicantName,
-        fraudScore: normalizedScore,
-        fraudRisk: normalizedScore < 30 ? 'Low' : normalizedScore < 70 ? 'Medium' : 'High',
-        lastChecked: new Date().toLocaleString(),
-        anomalies: [
-          {
-            id: 1,
-            type: 'Unusual Access Time',
-            description: 'Application submitted during non-business hours (2:45 AM)',
-            impact: 'Medium',
-            isDetected: isNightApplication
-          },
-          {
-            id: 2,
-            type: 'Geolocation Mismatch',
-            description: 'IP location differs from reported residence address',
-            impact: 'High',
-            isDetected: isUnusualLocation
-          },
-          {
-            id: 3,
-            type: 'Multiple Applications',
-            description: 'Multiple loan applications from same device ID',
-            impact: 'High',
-            isDetected: hasMultipleApplications
-          },
-          {
-            id: 4,
-            type: 'Application Speed',
-            description: 'Application completed unusually quickly (under 2 minutes)',
-            impact: 'Medium',
-            isDetected: isSpeedyApplication
-          }
-        ].filter(a => a.isDetected),
-        recommendations: normalizedScore < 30 
-          ? ['Proceed with standard verification']
-          : normalizedScore < 70 
-            ? ['Request additional identity proof', 'Verify phone number through OTP']
-            : ['Conduct detailed manual review', 'Flag for fraud team investigation', 'Consider rejecting application']
+    try {
+      // Dynamically import auth from firebase
+      const { auth } = await import('../firebase');
+      const user = auth.currentUser;
+      if (!user) throw new Error('User not authenticated');
+      const idToken = await user.getIdToken();
+      // Prepare data for backend
+      const tabular = { ...formData };
+      const text = {
+        email: formData.email,
+        applicantName: formData.applicantName
+      };
+      // 1. Standard advanced fraud detection
+      const response = await fetch('http://localhost:5001/api/detect-fraud-advanced', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ tabular, text })
       });
-      
+      if (!response.ok) {
+        throw new Error(`Error from API: ${response.status}`);
+      }
+      const result = await response.json();
+      // 2. FinChain-BERT fraud detection (send concatenated text)
+      const finchainText = [formData.applicantName, formData.email, formData.phone, formData.location].filter(Boolean).join(' ');
+      let finchainResult = null;
+      try {
+        const finchainResp = await fetch('http://localhost:5001/api/detect-fraud-finchain', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({ document_text: finchainText })
+        });
+        if (finchainResp.ok) {
+          finchainResult = await finchainResp.json();
+        }
+      } catch (err) {
+        finchainResult = { error: 'FinChain-BERT detection failed' };
+      }
+      setFraudResult({ ...result, finchain: finchainResult });
+      // Add to history (most recent first)
+      setHistory(prev => [{
+        ...result,
+        finchain: finchainResult,
+        applicantName: formData.applicantName,
+        email: formData.email,
+        phone: formData.phone,
+        location: formData.location,
+        ipAddress: formData.ipAddress,
+        analyzedAt: new Date().toISOString()
+      }, ...prev]);
+      toast.success('Fraud analysis completed using AI model');
+    } catch (error) {
+      console.error('Error analyzing fraud:', error);
+      toast.error('Failed to complete fraud analysis.');
+      setFraudResult(null);
+    } finally {
       setIsAnalyzing(false);
-      toast.success('Fraud analysis completed');
-    }, 2500);
+    }
   };
+
 
   return (
     <MainLayout>
@@ -240,12 +241,18 @@ const FraudDetection = () => {
 
             {fraudResult && (
               <Card>
+                {/* Show flagged badge if flagged */}
+                {isFlagged && fraudResult.fraudRisk === 'High' && (
+                  <div className="absolute top-4 right-4 bg-yellow-400 text-white px-3 py-1 rounded-full text-xs font-bold shadow">
+                    Flagged for Review
+                  </div>
+                )}
                 <CardHeader>
                   <div className="flex justify-between items-center">
                     <div>
                       <CardTitle>Fraud Analysis Result</CardTitle>
                       <CardDescription>
-                        Application for {fraudResult.applicantName}
+                        Application for {fraudResult.applicantName || formData.applicantName || 'N/A'}
                       </CardDescription>
                     </div>
                     <div 
@@ -264,18 +271,18 @@ const FraudDetection = () => {
                       ) : (
                         <AlertCircle className="h-4 w-4 mr-1" />
                       )}
-                      {fraudResult.fraudRisk} Risk
+                      {fraudResult.fraudRisk || 'N/A'} Risk
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
-                      <p className="text-sm font-medium">Fraud Risk Score: {fraudResult.fraudScore}/100</p>
-                      <p className="text-xs text-gray-500">Last checked: {fraudResult.lastChecked}</p>
+                      <p className="text-sm font-medium">Fraud Risk Score: {typeof fraudResult.fraudScore === 'number' ? fraudResult.fraudScore : 0}/100</p>
+                      <p className="text-xs text-gray-500">Last checked: {fraudResult.lastChecked || 'N/A'}</p>
                     </div>
                     <Progress 
-                      value={fraudResult.fraudScore} 
+                      value={typeof fraudResult.fraudScore === 'number' ? fraudResult.fraudScore : 0} 
                       className={`h-2 ${
                         fraudResult.fraudRisk === 'Low' 
                           ? 'bg-gray-100' 
@@ -293,7 +300,7 @@ const FraudDetection = () => {
 
                   <div>
                     <h3 className="text-lg font-medium mb-3">Detected Anomalies</h3>
-                    {fraudResult.anomalies.length > 0 ? (
+                    {Array.isArray(fraudResult.anomalies) && fraudResult.anomalies.length > 0 ? (
                       <div className="space-y-3">
                         {fraudResult.anomalies.map((anomaly: any) => (
                           <div 
@@ -303,7 +310,7 @@ const FraudDetection = () => {
                             <div className="flex justify-between items-start mb-2">
                               <div className="flex items-center">
                                 <AlertTriangle className="h-5 w-5 mr-2 text-warning" />
-                                <h4 className="font-medium">{anomaly.type}</h4>
+                                <h4 className="font-medium">{anomaly.type || 'Unknown'}</h4>
                               </div>
                               <div 
                                 className={`text-xs font-medium px-2 py-1 rounded-full ${
@@ -314,10 +321,10 @@ const FraudDetection = () => {
                                       : 'bg-red-100 text-danger'
                                 }`}
                               >
-                                {anomaly.impact} Impact
+                                {anomaly.impact || 'N/A'} Impact
                               </div>
                             </div>
-                            <p className="text-sm text-gray-600">{anomaly.description}</p>
+                            <p className="text-sm text-gray-600">{anomaly.description || 'No description available.'}</p>
                           </div>
                         ))}
                       </div>
@@ -332,14 +339,18 @@ const FraudDetection = () => {
                   <div>
                     <h3 className="text-lg font-medium mb-3">Recommended Actions</h3>
                     <ul className="space-y-2">
-                      {fraudResult.recommendations.map((rec: string, index: number) => (
-                        <li key={index} className="flex items-center text-sm">
-                          <span className="mr-2 flex-shrink-0 h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs">
-                            {index + 1}
-                          </span>
-                          {rec}
-                        </li>
-                      ))}
+                      {Array.isArray(fraudResult.recommendations) && fraudResult.recommendations.length > 0 ? (
+                        fraudResult.recommendations.map((rec: string, index: number) => (
+                          <li key={index} className="flex items-center text-sm">
+                            <span className="mr-2 flex-shrink-0 h-5 w-5 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs">
+                              {index + 1}
+                            </span>
+                            {rec || 'No recommendation text.'}
+                          </li>
+                        ))
+                      ) : (
+                        <li className="text-gray-500 text-sm">No recommendations available for this application.</li>
+                      )}
                     </ul>
                   </div>
                   
@@ -352,11 +363,11 @@ const FraudDetection = () => {
                             <p className="font-medium text-gray-500">Application Details</p>
                             <div className="flex items-center">
                               <User className="h-4 w-4 text-gray-400 mr-2" />
-                              <span>{fraudResult.applicantName}</span>
+                              <span>{fraudResult.applicantName || formData.applicantName || 'N/A'}</span>
                             </div>
                             <div className="flex items-center">
                               <AtSign className="h-4 w-4 text-gray-400 mr-2" />
-                              <span>{formData.email}</span>
+                              <span>{formData.email || 'N/A'}</span>
                             </div>
                             <div className="flex items-center">
                               <MapPin className="h-4 w-4 text-gray-400 mr-2" />
@@ -379,12 +390,83 @@ const FraudDetection = () => {
                     </AccordionItem>
                   </Accordion>
                 </CardContent>
+                {/* FinChain-BERT Output Section */}
+                <Card className="mt-4 bg-blue-50 border-blue-200">
+                  <CardHeader>
+                    <CardTitle>FinChain-BERT Fraud Detection</CardTitle>
+                    <CardDescription>
+                      High-accuracy NLP-based fraud detection for financial scenarios
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {fraudResult?.finchain && !fraudResult.finchain.error ? (
+                      <div className="space-y-2">
+                        <div><b>Label:</b> {fraudResult.finchain.fraud_label || 'N/A'}</div>
+                        <div><b>Probability:</b> {typeof fraudResult.finchain.fraud_probability !== 'undefined' ? (fraudResult.finchain.fraud_probability * 100).toFixed(1) + '%' : 'N/A'}</div>
+                        <div className="text-xs text-gray-600">{fraudResult.finchain.explanation || 'No explanation available.'}</div>
+                      </div>
+                    ) : fraudResult?.finchain && fraudResult.finchain.error ? (
+                      <div className="text-red-600 text-sm">{fraudResult.finchain.error}</div>
+                    ) : (
+                      <div className="text-gray-500 text-sm">No FinChain-BERT result available.</div>
+                    )}
+                  </CardContent>
+                </Card>
                 <CardFooter className="justify-between">
-                  <Button variant="outline">Download Report</Button>
+                  <Button variant="outline" onClick={() => {
+  if (!fraudResult) return;
+  const data = {
+    ...fraudResult,
+    applicantName: formData.applicantName,
+    email: formData.email,
+    phone: formData.phone,
+    location: formData.location,
+    ipAddress: formData.ipAddress,
+    analyzedAt: new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `fraud_report_${data.applicantName || 'application'}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast.success('Report downloaded!');
+}}>Download Report</Button>
                   <Button 
                     variant={fraudResult.fraudRisk === 'High' ? 'destructive' : 'default'}
+                    disabled={flaggingInProgress || (isFlagged && fraudResult.fraudRisk === 'High')}
+                    onClick={async () => {
+                      if (fraudResult.fraudRisk === 'High') {
+                        setFlaggingInProgress(true);
+                        setTimeout(() => {
+                          setIsFlagged(true);
+                          setFlaggedQueue(prev => [
+                            {
+                              ...fraudResult,
+                              flaggedAt: new Date().toISOString(),
+                              applicantName: formData.applicantName || fraudResult.applicantName || 'N/A',
+                              ipAddress: formData.ipAddress,
+                            },
+                            ...prev
+                          ]);
+                          toast.success('Application flagged for manual review!');
+                          setFlaggingInProgress(false);
+                        }, 1200);
+                      } else {
+                        toast.success('Application approved!');
+                      }
+                    }}
                   >
-                    {fraudResult.fraudRisk === 'High' ? 'Flag for Review' : 'Approve Application'}
+                    {fraudResult.fraudRisk === 'High'
+                      ? flaggingInProgress
+                        ? 'Flagging...'
+                        : isFlagged
+                          ? 'Flagged'
+                          : 'Flag for Review'
+                      : 'Approve Application'}
                   </Button>
                 </CardFooter>
               </Card>
@@ -400,68 +482,98 @@ const FraudDetection = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  <div className="rounded-md border p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <AlertCircle className="h-5 w-5 text-danger mr-3" />
-                        <div>
-                          <h4 className="font-medium">Raj Kumar</h4>
-                          <p className="text-sm text-gray-500">April 8, 2025 • IP: 103.45.231.12</p>
-                        </div>
-                      </div>
-                      <div className="text-sm font-medium bg-red-100 text-danger px-3 py-1 rounded-full">
-                        High Risk (87/100)
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="rounded-md border p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <AlertTriangle className="h-5 w-5 text-warning mr-3" />
-                        <div>
-                          <h4 className="font-medium">Sanjay Patel</h4>
-                          <p className="text-sm text-gray-500">April 7, 2025 • IP: 182.71.165.48</p>
-                        </div>
-                      </div>
-                      <div className="text-sm font-medium bg-yellow-100 text-warning px-3 py-1 rounded-full">
-                        Medium Risk (58/100)
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="rounded-md border p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <CheckCircle className="h-5 w-5 text-success mr-3" />
-                        <div>
-                          <h4 className="font-medium">Neha Sharma</h4>
-                          <p className="text-sm text-gray-500">April 6, 2025 • IP: 122.176.54.89</p>
-                        </div>
-                      </div>
-                      <div className="text-sm font-medium bg-green-100 text-success px-3 py-1 rounded-full">
-                        Low Risk (12/100)
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-md border p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <AlertCircle className="h-5 w-5 text-danger mr-3" />
-                        <div>
-                          <h4 className="font-medium">Vikram Singh</h4>
-                          <p className="text-sm text-gray-500">April 5, 2025 • IP: 45.118.63.207</p>
-                        </div>
-                      </div>
-                      <div className="text-sm font-medium bg-red-100 text-danger px-3 py-1 rounded-full">
-                        High Risk (92/100)
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
+  <div className="space-y-4">
+    {/* Dynamic analyzed history */}
+    {history.length === 0 && (
+      <div className="rounded-md border p-4 text-center text-gray-500">No analyzed applications yet.</div>
+    )}
+    {history.map((entry, idx) => {
+      let risk = entry.fraudRisk || 'Medium';
+      let icon = <AlertTriangle className="h-5 w-5 text-warning mr-3" />;
+      let bg = 'bg-yellow-100 text-warning';
+      if (risk === 'High') {
+        icon = <AlertCircle className="h-5 w-5 text-danger mr-3" />;
+        bg = 'bg-red-100 text-danger';
+      } else if (risk === 'Low') {
+        icon = <CheckCircle className="h-5 w-5 text-success mr-3" />;
+        bg = 'bg-green-100 text-success';
+      }
+      return (
+        <div key={entry.analyzedAt+entry.applicantName+idx} className="rounded-md border p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              {icon}
+              <div>
+                <h4 className="font-medium">{entry.applicantName || 'Applicant'}</h4>
+                <p className="text-sm text-gray-500">{new Date(entry.analyzedAt).toLocaleString()} • IP: {entry.ipAddress || 'N/A'}</p>
+              </div>
+            </div>
+            <div className={`text-sm font-medium ${bg} px-3 py-1 rounded-full`}>
+              {risk} Risk ({typeof entry.fraudScore === 'number' ? entry.fraudScore : 0}/100)
+            </div>
+          </div>
+        </div>
+      );
+    })}
+    {/* Static demo entries below */}
+    <div className="rounded-md border p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center">
+          <AlertCircle className="h-5 w-5 text-danger mr-3" />
+          <div>
+            <h4 className="font-medium">Raj Kumar</h4>
+            <p className="text-sm text-gray-500">April 8, 2025 • IP: 103.45.231.12</p>
+          </div>
+        </div>
+        <div className="text-sm font-medium bg-red-100 text-danger px-3 py-1 rounded-full">
+          High Risk (87/100)
+        </div>
+      </div>
+    </div>
+    <div className="rounded-md border p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center">
+          <AlertTriangle className="h-5 w-5 text-warning mr-3" />
+          <div>
+            <h4 className="font-medium">Sanjay Patel</h4>
+            <p className="text-sm text-gray-500">April 7, 2025 • IP: 182.71.165.48</p>
+          </div>
+        </div>
+        <div className="text-sm font-medium bg-yellow-100 text-warning px-3 py-1 rounded-full">
+          Medium Risk (58/100)
+        </div>
+      </div>
+    </div>
+    <div className="rounded-md border p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center">
+          <CheckCircle className="h-5 w-5 text-success mr-3" />
+          <div>
+            <h4 className="font-medium">Neha Sharma</h4>
+            <p className="text-sm text-gray-500">April 6, 2025 • IP: 122.176.54.89</p>
+          </div>
+        </div>
+        <div className="text-sm font-medium bg-green-100 text-success px-3 py-1 rounded-full">
+          Low Risk (12/100)
+        </div>
+      </div>
+    </div>
+    <div className="rounded-md border p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center">
+          <AlertCircle className="h-5 w-5 text-danger mr-3" />
+          <div>
+            <h4 className="font-medium">Vikram Singh</h4>
+            <p className="text-sm text-gray-500">April 5, 2025 • IP: 45.118.63.207</p>
+          </div>
+        </div>
+        <div className="text-sm font-medium bg-red-100 text-danger px-3 py-1 rounded-full">
+          High Risk (92/100)
+        </div>
+      </div>
+    </div>
+  </div>
+</CardContent>
             </Card>
           </TabsContent>
         </Tabs>
