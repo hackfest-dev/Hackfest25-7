@@ -1,0 +1,43 @@
+
+project_id = "gsyqmgymkajiccoybdoe"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+
+[db]
+port = 54322
+
+[studio]
+enabled = true
+port = 54323
+api_url = "http://localhost"
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+
+[auth]
+enabled = true
+
+[realtime]
+enabled = true
+
+[functions.analyze-compliance]
+verify_jwt = false
+
+[functions.analyze-loan-risk]
+verify_jwt = false
+
+[functions.generate-report]
+verify_jwt = false
+
+[functions.detect-fraud]
+verify_jwt = false
+
+[functions.rbi-api]
+verify_jwt = false
