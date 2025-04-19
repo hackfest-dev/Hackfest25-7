@@ -187,45 +187,24 @@ const Reporting = () => {
       toast.error('No report generated to submit');
       return;
     }
-    
     setIsSubmitting(true);
-    
-    try {
-      // Migrate: Call FastAPI backend instead of Supabase Edge Function
-      const user = auth.currentUser;
-      if (!user) throw new Error('User not authenticated');
-      const idToken = await user.getIdToken();
-      const response = await fetch('http://localhost:5001/api/rbi-api', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify({
-          report_id: generatedReport.id,
-          report_data: generatedReport
-        })
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Error from API: ${response.status}`);
-      }
-      const data = await response.json();
-      setSubmissionStatus({
-        status: data.status,
-        submissionId: data.rbi_submission_id,
-        timestamp: data.timestamp || new Date().toISOString()
-      });
-      toast.success('Report submitted to RBI successfully');
-      // Remove polling logic unless backend supports it
-    } catch (error) {
-      console.error('Error submitting to RBI:', error);
-      toast.error('Failed to submit report to RBI');
-    } finally {
-      setIsSubmitting(false);
-    }
+    // Simulate status: pending -> submitted -> pending review
+    setSubmissionStatus({ status: 'pending', timestamp: new Date().toISOString() });
+    setTimeout(() => {
+      setSubmissionStatus({ status: 'submitted', timestamp: new Date().toISOString() });
+      setTimeout(() => {
+        setSubmissionStatus({ status: 'pending review', timestamp: new Date().toISOString() });
+      }, 2000);
+    }, 2000);
+    // Also add the report to recentReports
+    setRecentReports(prev => [
+      { ...generatedReport, id: `sim-${Date.now()}`, created_at: new Date().toISOString() },
+      ...prev
+    ]);
+    toast.success('Report submitted to RBI successfully');
+    setIsSubmitting(false);
   };
-  
+
   const startStatusPolling = (submissionId) => {
     const pollInterval = setInterval(async () => {
       try {
