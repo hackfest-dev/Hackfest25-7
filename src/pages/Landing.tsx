@@ -55,7 +55,7 @@ const Landing = () => {
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link to="/dashboard">
               <Button size="lg" className="w-full sm:w-auto">
-                Try Demo
+                Explore
               </Button>
             </Link>
             <Link to="/compliance">
